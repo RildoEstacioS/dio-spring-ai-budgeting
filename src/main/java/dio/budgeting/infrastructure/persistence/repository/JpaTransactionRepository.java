@@ -7,6 +7,7 @@ import dio.budgeting.infrastructure.persistence.entity.TransactionEntity;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.stream.StreamSupport;
 
 @Repository
 public class JpaTransactionRepository implements TransactionRepository {
@@ -20,6 +21,13 @@ public class JpaTransactionRepository implements TransactionRepository {
     public Transaction save(Transaction transaction) {
         var entity = TransactionEntity.from(transaction);
         return transactionEntityRepository.save(entity).toDomain();
+    }
+
+    @Override
+    public List<Transaction> findAll() {
+        return StreamSupport.stream(transactionEntityRepository.findAll().spliterator(), false)
+                .map(TransactionEntity::toDomain)
+                .toList();
     }
 
     @Override
