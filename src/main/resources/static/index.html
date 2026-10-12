@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Budgeting · Painel de despesas</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="css/styles.css">
+    <script type="module" src="js/app.js"></script>
+</head>
+<body>
+<header class="topbar">
+    <div class="container topbar-inner">
+        <div>
+            <p class="eyebrow">Desafio Spring AI · Itaú / DIO</p>
+            <h1>Budgeting</h1>
+            <p class="subtitle">Painel de despesas da API de orçamento</p>
+        </div>
+        <button type="button" class="button button-ghost" id="refresh-button">Atualizar</button>
+    </div>
+</header>
+
+<main class="container">
+    <section class="cards" aria-label="Resumo das despesas">
+        <article class="card card-highlight">
+            <h2 class="card-label">Total geral</h2>
+            <p class="card-value" id="card-total">—</p>
+            <p class="card-hint">Todas as categorias</p>
+        </article>
+        <article class="card">
+            <h2 class="card-label"><span class="dot dot-pharma" aria-hidden="true"></span>Farmácia</h2>
+            <p class="card-value" id="card-pharma">—</p>
+            <p class="card-hint" id="card-pharma-hint">&nbsp;</p>
+        </article>
+        <article class="card">
+            <h2 class="card-label"><span class="dot dot-groceries" aria-hidden="true"></span>Mercado</h2>
+            <p class="card-value" id="card-groceries">—</p>
+            <p class="card-hint" id="card-groceries-hint">&nbsp;</p>
+        </article>
+        <article class="card">
+            <h2 class="card-label">Lançamentos</h2>
+            <p class="card-value" id="card-count">—</p>
+            <p class="card-hint">Despesas registradas</p>
+        </article>
+    </section>
+
+    <div class="layout">
+        <section class="panel" aria-labelledby="form-title">
+            <h2 id="form-title" class="panel-title">Adicionar despesa</h2>
+            <form id="expense-form" novalidate>
+                <div class="field">
+                    <label for="description">Descrição</label>
+                    <input id="description" name="description" type="text" maxlength="255" autocomplete="off"
+                           placeholder="Ex.: Farmácia - vitaminas" required>
+                </div>
+                <div class="field">
+                    <label for="category">Categoria</label>
+                    <select id="category" name="category" required>
+                        <option value="">Selecione</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="amount">Valor</label>
+                    <div class="money-input">
+                        <span aria-hidden="true">R$</span>
+                        <input id="amount" name="amount" type="text" inputmode="decimal" autocomplete="off"
+                               placeholder="0,00" aria-describedby="amount-hint" required>
+                    </div>
+                    <p class="field-hint" id="amount-hint">Use vírgula para os centavos, por exemplo 80,00.</p>
+                </div>
+                <button type="submit" class="button button-primary" id="submit-button">Adicionar despesa</button>
+                <p class="feedback" id="feedback" role="status" aria-live="polite" hidden></p>
+            </form>
+        </section>
+
+        <section class="panel" aria-labelledby="list-title">
+            <div class="panel-header">
+                <h2 id="list-title" class="panel-title">Despesas</h2>
+                <div class="filters" id="filters" role="group" aria-label="Filtrar por categoria"></div>
+            </div>
+            <div class="table-wrapper" id="table-wrapper" aria-busy="true">
+                <table class="expenses" id="expenses-table">
+                    <thead>
+                    <tr>
+                        <th scope="col">Descrição</th>
+                        <th scope="col">Categoria</th>
+                        <th scope="col" class="num">Valor</th>
+                    </tr>
+                    </thead>
+                    <tbody id="expenses-body"></tbody>
+                </table>
+                <div class="empty-state" id="empty-state" hidden>
+                    <p class="empty-title" id="empty-title"></p>
+                    <p class="empty-text" id="empty-text"></p>
+                </div>
+            </div>
+            <p class="list-footer" id="list-footer"></p>
+        </section>
+    </div>
+
+    <section class="panel voice-panel" aria-labelledby="voice-title">
+        <div class="voice-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="2" width="6" height="12" rx="3"/>
+                <path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"/>
+                <path d="M3 3l18 18"/>
+            </svg>
+        </div>
+        <div>
+            <h2 id="voice-title" class="panel-title">Assistente por voz <span class="badge badge-muted">Desativado</span></h2>
+            <p>
+                Recurso futuro nesta interface. O endpoint <code>POST /transactions/ai</code> foi projetado para
+                transcrever um áudio, interpretar o pedido com IA e responder em áudio. Ele exige um provedor de IA
+                configurado no servidor (<code>OPENAI_API_KEY</code> com créditos) e esse fluxo ainda não foi validado.
+                Por isso, nenhum controle de voz é exibido aqui.
+            </p>
+        </div>
+    </section>
+</main>
+
+<footer class="container footer">
+    <p>
+        Dados lidos de <code>GET /transactions/{categoria}</code> e criados por <code>POST /transactions</code>.
+        Valores armazenados em centavos e exibidos em reais.
+    </p>
+</footer>
+</body>
+</html>

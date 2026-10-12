@@ -10,7 +10,7 @@ import java.util.List;
 /**
  * Repositório falso em memória para testar casos de uso sem Spring, banco ou Docker.
  */
-class InMemoryTransactionRepository implements TransactionRepository {
+public class InMemoryTransactionRepository implements TransactionRepository {
     private final List<Transaction> transactions = new ArrayList<>();
 
     @Override
