@@ -19,9 +19,19 @@ export function parseBrlToCents(text) {
 }
 
 /**
+ * Lê um campo *InCents da API (número inteiro) como BigInt, sem passar por decimais.
+ */
+export function centsFromApi(value) {
+    if (!Number.isSafeInteger(value)) {
+        throw new Error(`valor em centavos inválido recebido da API: ${value}`);
+    }
+    return BigInt(value);
+}
+
+/**
  * Converte o amount em reais devolvido pela API (ex.: 80.00, lido pelo JSON como 80) para centavos.
  * String(número) produz a representação decimal exata mais curta ("80", "19.99"), que é lida como texto,
- * sem multiplicar por 100 em ponto flutuante.
+ * sem multiplicar por 100 em ponto flutuante. Prefira centsFromApi quando o campo *InCents existir.
  */
 export function apiAmountToCents(value) {
     const match = API_DECIMAL.exec(String(value));
@@ -33,13 +43,19 @@ export function apiAmountToCents(value) {
     return sign ? -cents : cents;
 }
 
-/** Formata centavos como moeda brasileira: 123456n → "R$ 1.234,56". */
-export function formatCentsAsBrl(cents) {
+/** Formata centavos para o campo de valor do formulário: 123456n → "1.234,56". */
+export function formatCentsForInput(cents) {
     const negative = cents < 0n;
     const absolute = negative ? -cents : cents;
     const reais = integerFormatter.format(absolute / 100n);
     const centavos = (absolute % 100n).toString().padStart(2, '0');
-    return `${negative ? '-' : ''}R$ ${reais},${centavos}`;
+    return `${negative ? '-' : ''}${reais},${centavos}`;
+}
+
+/** Formata centavos como moeda brasileira: 123456n → "R$ 1.234,56". */
+export function formatCentsAsBrl(cents) {
+    const negative = cents < 0n;
+    return `${negative ? '-' : ''}R$ ${formatCentsForInput(negative ? -cents : cents)}`;
 }
 
 /** Converte centavos (BigInt) para o número inteiro enviado no JSON, garantindo representação exata. */

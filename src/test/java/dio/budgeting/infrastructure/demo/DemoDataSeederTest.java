@@ -9,6 +9,8 @@ import org.junit.jupiter.api.Test;
 
 import java.util.stream.Collectors;
 
+import static dio.budgeting.domain.TestTransactions.CLOCK;
+import static dio.budgeting.domain.TestTransactions.entry;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class DemoDataSeederTest {
@@ -18,7 +20,7 @@ class DemoDataSeederTest {
     @BeforeEach
     void setUp() {
         transactionRepository = new InMemoryTransactionRepository();
-        demoDataSeeder = new DemoDataSeeder(transactionRepository, new PersistTransactionUseCase(transactionRepository));
+        demoDataSeeder = new DemoDataSeeder(transactionRepository, new PersistTransactionUseCase(transactionRepository, CLOCK));
     }
 
     @Test
@@ -30,12 +32,12 @@ class DemoDataSeederTest {
         assertThat(transactions).hasSize(DemoDataSeeder.DEMO_TRANSACTIONS.size());
         assertThat(transactions).allSatisfy(transaction -> assertThat(transaction.getAmount()).isPositive());
         assertThat(transactions.stream().map(Transaction::getCategory).collect(Collectors.toSet()))
-                .containsExactlyInAnyOrder(Category.values());
+                .containsExactlyInAnyOrder(Category.GROCERIES, Category.PHARMA, Category.AUTO);
     }
 
     @Test
     void should_keepExistingData_when_repositoryIsNotEmpty() {
-        var existing = transactionRepository.save(new Transaction("Farmácia", 8000, Category.PHARMA));
+        var existing = transactionRepository.save(entry().expense("Farmácia", 8000, Category.PHARMA).build());
 
         var created = demoDataSeeder.seed();
 

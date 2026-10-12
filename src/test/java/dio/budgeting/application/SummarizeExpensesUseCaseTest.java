@@ -2,12 +2,14 @@ package dio.budgeting.application;
 
 import dio.budgeting.application.input.PersistTransactionInput;
 import dio.budgeting.domain.Category;
-import dio.budgeting.domain.Transaction;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 
+import static dio.budgeting.domain.TestTransactions.CLOCK;
+import static dio.budgeting.domain.TestTransactions.TODAY;
+import static dio.budgeting.domain.TestTransactions.entry;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class SummarizeExpensesUseCaseTest {
@@ -42,7 +44,7 @@ class SummarizeExpensesUseCaseTest {
         assertThat(summary.total()).isEqualTo(new BigDecimal("240.50"));
         assertThat(summary.transactionCount()).isEqualTo(3);
         assertThat(summary.largestExpense().description()).isEqualTo("Mercado");
-        assertThat(summary.largestExpense().value()).isEqualTo(new BigDecimal("120.50"));
+        assertThat(summary.largestExpense().amount()).isEqualTo(new BigDecimal("120.50"));
     }
 
     @Test
@@ -57,7 +59,7 @@ class SummarizeExpensesUseCaseTest {
         assertThat(summary.total()).isEqualTo(new BigDecimal("99.99"));
         assertThat(summary.transactionCount()).isEqualTo(2);
         assertThat(summary.largestExpense().description()).isEqualTo("Farmácia");
-        assertThat(summary.largestExpense().value()).isEqualTo(new BigDecimal("80.00"));
+        assertThat(summary.largestExpense().amount()).isEqualTo(new BigDecimal("80.00"));
     }
 
     @Test
@@ -84,8 +86,21 @@ class SummarizeExpensesUseCaseTest {
     }
 
     @Test
+    void should_ignoreIncomesAndPlannedEntries() {
+        save("Farmácia", 8000, Category.PHARMA);
+        transactionRepository.save(entry().income("Salário", 650000, Category.SALARY).build());
+        transactionRepository.save(entry().expense("Aluguel", 180000, Category.HOUSING).on(TODAY.plusDays(5)).planned().build());
+
+        var summary = summarizeExpensesUseCase.execute(null);
+
+        assertThat(summary.total()).isEqualTo(new BigDecimal("80.00"));
+        assertThat(summary.transactionCount()).isEqualTo(1);
+        assertThat(summary.largestExpense().description()).isEqualTo("Farmácia");
+    }
+
+    @Test
     void should_includeTransaction_when_persistedThroughUseCase() {
-        var persistTransactionUseCase = new PersistTransactionUseCase(transactionRepository);
+        var persistTransactionUseCase = new PersistTransactionUseCase(transactionRepository, CLOCK);
         var created = persistTransactionUseCase.execute(
                 new PersistTransactionInput("Farmácia", 8000, Category.PHARMA));
 
@@ -97,6 +112,6 @@ class SummarizeExpensesUseCaseTest {
     }
 
     private void save(String description, long amountInCents, Category category) {
-        transactionRepository.save(new Transaction(description, amountInCents, category));
+        transactionRepository.save(entry().expense(description, amountInCents, category).build());
     }
 }

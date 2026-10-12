@@ -1,4 +1,4 @@
-# Budgeting: controle de gastos com Spring Boot, interface web e IA por voz
+# Budgeting v2: painel financeiro pessoal local com Spring Boot
 
 Projeto do **Desafio Final do Bootcamp Itaú / DIO**: *Desenvolvendo sua API Inteligente com Reconhecimento de Fala e Spring Boot*.
 
@@ -8,387 +8,415 @@ Projeto do **Desafio Final do Bootcamp Itaú / DIO**: *Desenvolvendo sua API Int
 
 ## Visão geral
 
-Aplicação local de controle de gastos composta por:
+Aplicação local de controle financeiro pessoal:
 
-- **API REST** em Spring Boot para registrar e consultar despesas;
-- **MySQL** em Docker para persistência;
-- **interface web** servida pelo próprio Spring Boot em `http://localhost:8080/` (HTML, CSS e JavaScript puro);
-- **perfil `demo`** que popula um banco separado com dados de demonstração;
-- **integração com IA por voz** no back-end (`POST /transactions/ai`), que depende de uma chave da OpenAI com créditos. Esse fluxo ainda **não foi executado** nesta validação (veja [Uso da IA por voz](#uso-da-ia-por-voz-arquitetura-e-estado-atual)).
+- **Receitas e despesas**, com data, meio de pagamento, recorrência (apenas como característica) e observação.
+- **Lançamentos realizados e previstos**: datas futuras entram como previstas e nunca se misturam ao realizado.
+- **Dashboard por período**, com receitas, despesas, saldo, comparação com o período anterior, gastos por categoria, maiores despesas, lançamentos recentes, bloco de previstos e destaques calculados localmente.
+- **Interface SPA local** em HTML, CSS e JavaScript puro, servida pelo próprio Spring Boot.
+- **API REST** com listagem filtrada e paginada, criação, consulta por id, edição, exclusão, dashboard e dados de referência.
+- **MySQL** com schema versionado por **Flyway (V1 a V4)**, desabilitado por padrão.
+- **Perfil `demo`** com seed v2 exclusivo do banco `budgeting_demo`.
+- **IA por voz** (`POST /transactions/ai`): o ponto de integração existe no back-end, mas **não foi executado** (veja [IA e voz](#ia-e-voz-estado-atual)).
 
 ---
 
-## Funcionalidades validadas
+## ⚠️ Estado dos bancos
 
-| Funcionalidade | Como foi validada |
+| Banco | Schema | Uso |
+|---|---|---|
+| `budgeting_demo` | **v2** (Flyway V1 a V4) | **Ambiente seguro para rodar a v2**, com dados de demonstração |
+| `transaction` | v1 | Banco da versão anterior. **Ainda não foi migrado** |
+| `transaction_demo` | v1 | Evidência da versão anterior. **Não deve ser migrado** |
+
+- **Não habilite o Flyway apontando para `transaction` ou `transaction_demo`.** Migrar um banco v1 exige um procedimento autorizado: backup, ensaio numa cópia, comparação antes e depois, e só então aplicação no banco real.
+- Com o Flyway desabilitado (padrão), a v2 **se recusa a subir** contra um banco v1 (`ddl-auto=validate` acusa colunas ausentes) e **não altera nada**. Esse comportamento foi testado numa cópia v1.
+
+---
+
+## Funcionalidades
+
+| Área | O que existe |
 |---|---|
-| Cadastro de despesa pelo formulário da interface (valor digitado em reais, enviado em centavos) | Interface + `GET` + consulta SQL |
-| Consulta e filtro por categoria, com estado vazio | Interface + `GET /transactions/{category}` |
-| Valores recebidos em centavos e exibidos em BRL (`8000` → `80.00` → `R$ 80,00`) | REST, interface e testes unitários |
-| Cards de total geral, Farmácia, Mercado e quantidade de lançamentos | Interface |
-| Banco de demonstração separado (`transaction_demo`), com seed que não duplica | Testes unitários + dois startups reais do perfil `demo` |
-| Cálculo de total, quantidade e maior despesa (`summarize-expenses`) | Testes unitários (sem IA) |
-
-Os números reais estão em [Evidências de validação](#evidências-de-validação).
+| Lançamentos | Receita ou despesa, descrição, valor em centavos, categoria compatível com o tipo, data, meio de pagamento, recorrência, situação (realizado ou previsto) e observação |
+| Regras | Valor > 0; descrição de 1 a 255 caracteres; data entre 01/01/2000 e hoje + 12 meses; data futura só como **previsto**; um lançamento realizado só volta a previsto por edição explícita |
+| Histórico | Filtros por período, tipo, categoria e situação; paginação; totais realizado e previsto calculados no servidor |
+| Edição | Edição completa, confirmação de previsto (quando a data chega) e exclusão com confirmação |
+| Dashboard | Este mês, mês anterior, últimos 30 dias ou intervalo personalizado (até 366 dias) |
+| Destaques locais | Maior categoria, maior gasto, comparação de despesas e **possível** cobrança recorrente (heurística transparente). Sem IA |
+| Demo | Seed v2 com cerca de 40 lançamentos em 3 meses, idempotente e bloqueado fora do `budgeting_demo` |
 
 ---
 
 ## Tecnologias
 
 - Java 25
-- Spring Boot 4.0.5 (Web, Data JPA, Docker Compose support)
-- Spring AI 2.0.0-M4 com OpenAI. Os modelos abaixo estão **configurados no projeto** (`application.properties`), mas o fluxo de IA **ainda não foi executado nem validado**:
-  - `whisper-1` para transcrição de áudio
-  - `gpt-4o-mini` para chat e Tool Calling
-  - `gpt-4o-mini-tts` para texto em fala
+- Spring Boot 4.0.5 (Web, Data JPA, Flyway)
+- Flyway (`spring-boot-starter-flyway` e `flyway-mysql`)
 - MySQL 9.6, via Docker Compose
-- HTML, CSS e JavaScript puro, servidos pelo Spring Boot (sem framework front-end, npm ou CDN)
-- Gradle 9.4.1 (wrapper), Lombok
-- JUnit 5 + AssertJ
+- HTML, CSS e JavaScript puro (ES modules), sem framework, npm ou CDN
+- Spring AI 2.0.0-M4 com OpenAI. Os modelos `whisper-1`, `gpt-4o-mini` e `gpt-4o-mini-tts` estão **configurados no projeto**, mas o fluxo de IA **ainda não foi executado nem validado**
+- Gradle 9.4.1 (wrapper), Lombok, JUnit 5 e AssertJ
 
 ---
 
 ## Arquitetura
 
-Camadas inspiradas em DDD / Clean Architecture:
-
 ```
 src/main/java/dio/budgeting
-├── domain/                 Transaction, Category, TransactionId, TransactionRepository (porta)
-├── application/            casos de uso, também expostos como tools (@Tool)
-│   ├── input/              PersistTransactionInput
-│   └── output/             TransactionOutput, ExpenseSummaryOutput (valores em reais)
+├── domain/                 Transaction (regras), TransactionDetails, EntryType, Category (com tipo e rótulo),
+│                           PaymentMethod, Recurrence, EntryStatus, DateRange, PeriodPreset, ReportingPeriod,
+│                           TransactionFilter, TransactionRepository (porta)
+├── application/            casos de uso: criar (contrato completo e legado), buscar, consultar, editar,
+│   │                       excluir, resumo do dashboard e resumo de despesas (tool)
+│   ├── dashboard/          DashboardCalculator e InsightGenerator (cálculos determinísticos)
+│   ├── input/              comandos e consultas
+│   └── output/             saídas com valores em reais (BigDecimal) e em centavos
 └── infrastructure/
-    ├── http/               TransactionController, request/response
-    ├── persistence/        TransactionEntity, JpaTransactionRepository (adaptador da porta)
-    └── demo/               DemoDataSeeder (somente no perfil demo)
+    ├── http/               controllers, mapeamento do corpo HTTP, rotas, ProblemDetail
+    ├── persistence/        entidade JPA (enums como VARCHAR) e adaptador do repositório
+    ├── config/             Clock no fuso America/Sao_Paulo
+    └── demo/               seed v2 (perfil demo) e seed v1 preservado (perfil demo-v1)
 
 src/main/resources
-├── static/                 interface web: index.html, css/styles.css, js/app.js, js/money.js
-└── prompts/                system-message.st (prompt do assistente de IA)
+├── db/migration/           V1__baseline … V4__financial_entry_indexes
+├── static/                 index.html, css/styles.css, js/*.js (SPA por hash: #/painel e #/lancamentos)
+└── prompts/                system-message.st (prompt do assistente de voz)
 ```
 
-Categorias disponíveis (`Category`): `GROCERIES` (Mercado), `PHARMA` (Farmácia), `AUTO` (Automóvel).
+**Princípios:**
+- Valores em **centavos** (`long`) no domínio e no banco, convertidos para BRL só nas bordas.
+- **Cálculos determinísticos** em Java/SQL.
+- A IA, quando existir, apenas consulta ferramentas e explica resultados.
+
+### Categorias
+
+| Tipo | Categorias |
+|---|---|
+| Receita | Salário, Freelance, Reembolso, Rendimentos, Outras receitas |
+| Despesa | Mercado, Alimentação fora, Farmácia, Saúde, Automóvel, Moradia, Contas da casa, Assinaturas, Lazer, Educação, Outras despesas |
+
+`GROCERIES`, `PHARMA` e `AUTO` mantêm os nomes da v1.
 
 ---
 
-## Como executar localmente
+## Como executar (ambiente seguro `budgeting_demo`)
 
 ### Pré-requisitos
 
-- JDK 25
-- Docker em execução
-- `OPENAI_API_KEY` **não é necessária** para a API REST nem para a interface. Ela só é exigida pelo endpoint de voz.
+- JDK 25 e Docker em execução
+- `OPENAI_API_KEY` **não é necessária** para a interface, a API REST e o dashboard
 
-### 1. Subir o MySQL
+### 1. Preparar o `.env` (uma única vez)
+
+As senhas do MySQL **não ficam no repositório**. O `compose.yml` lê `MYSQL_PASSWORD` e `MYSQL_ROOT_PASSWORD` de um arquivo `.env` local, que é **ignorado pelo Git e nunca deve ser versionado**. Sem ele, o Docker Compose para com a mensagem "Defina MYSQL_PASSWORD no arquivo .env".
+
+O comando abaixo cria o `.env` a partir do `.env.example`. Ele pede as senhas com entrada oculta e não as exibe.
+
+**Windows (PowerShell):**
+
+```powershell
+if (Test-Path .env) { Write-Host '.env já existe; nada foi alterado.' } else {
+    $app  = Read-Host -AsSecureString 'MYSQL_PASSWORD (usuário da aplicação)'
+    $root = Read-Host -AsSecureString 'MYSQL_ROOT_PASSWORD'
+    $plain = { param($s) [System.Net.NetworkCredential]::new('', $s).Password }
+    $lines = foreach ($line in Get-Content .env.example) {
+        if ($line -like 'MYSQL_PASSWORD=*') { "MYSQL_PASSWORD='" + (& $plain $app) + "'" }
+        elseif ($line -like 'MYSQL_ROOT_PASSWORD=*') { "MYSQL_ROOT_PASSWORD='" + (& $plain $root) + "'" }
+        else { $line }
+    }
+    [IO.File]::WriteAllLines((Join-Path $PWD '.env'), $lines, (New-Object Text.UTF8Encoding $false))
+    Write-Host '.env criado; as senhas não foram exibidas.'
+}
+```
+
+**Linux / macOS:**
+
+```bash
+if [ -f .env ]; then echo ".env já existe; nada foi alterado."; else
+  read -rsp 'MYSQL_PASSWORD (usuário da aplicação): ' APP_PW; echo
+  read -rsp 'MYSQL_ROOT_PASSWORD: ' ROOT_PW; echo
+  umask 077
+  { grep -v -E '^(MYSQL_PASSWORD|MYSQL_ROOT_PASSWORD)=' .env.example
+    printf "MYSQL_PASSWORD='%s'\nMYSQL_ROOT_PASSWORD='%s'\n" "$APP_PW" "$ROOT_PW"; } > .env
+  unset APP_PW ROOT_PW; echo ".env criado; as senhas não foram exibidas."
+fi
+```
+
+- **Use senhas próprias.** Credenciais de desenvolvimento **não devem ser reutilizadas** em nenhum outro lugar, e senhas que já apareceram em algum histórico público não devem ser usadas.
+- As variáveis `MYSQL_*` só valem na **primeira inicialização** de um volume vazio. Se você já tem um volume do MySQL, o `.env` precisa ter as senhas que esse volume já usa.
+- Para validar o compose, use só `docker compose config --quiet`. **Sem o `--quiet`, o comando imprime os valores resolvidos, inclusive as senhas.**
+
+### 2. Subir o MySQL
 
 ```bash
 docker compose up -d
 docker compose ps
 ```
 
-Espere o serviço `database` aparecer como `healthy`. Na **primeira** inicialização, o MySQL pode levar alguns minutos e aparecer temporariamente como `unhealthy` antes de estabilizar.
+Espere o serviço `database` ficar `healthy`. Na primeira inicialização isso pode levar alguns minutos. O MySQL aceita conexões só da própria máquina, em `127.0.0.1:3307`; a aplicação usa `localhost:3307`. O healthcheck usa `mysqladmin ping`, sem usuário nem senha.
 
-### 2. Iniciar a aplicação no banco `transaction`
-
-Comando usado nesta validação. O suporte automático a Docker Compose fica desligado e a conexão aponta para o MySQL já em execução.
-
-**Windows (PowerShell):**
-
-```powershell
-.\gradlew.bat bootRun "--args=--spring.docker.compose.enabled=false --spring.datasource.url=jdbc:mysql://localhost:3307/transaction --spring.datasource.username=<USUARIO_APP_DO_COMPOSE> --spring.datasource.password=<SENHA_APP_DO_COMPOSE>"
-```
-
-**Linux / macOS:**
-
-```bash
-./gradlew bootRun --args='--spring.docker.compose.enabled=false --spring.datasource.url=jdbc:mysql://localhost:3307/transaction --spring.datasource.username=<USUARIO_APP_DO_COMPOSE> --spring.datasource.password=<SENHA_APP_DO_COMPOSE>'
-```
-
-- Substitua os marcadores pelos valores de `MYSQL_USER` e `MYSQL_PASSWORD` do seu `compose.yml` local (veja [Segurança](#segurança)).
-- Opcional: `-g <pasta>` faz o Gradle usar outro diretório de cache. Nesta validação foi usado para manter o cache fora do disco do sistema.
-- Alternativa do projeto base: `./gradlew bootRun` sem argumentos deixa o Spring Boot iniciar o `compose.yml` e ler as credenciais sozinho, mas exige o comando `docker` no PATH. Esse caminho **não foi validado** nesta sessão.
-
-### 3. Usar a interface
-
-Abra **http://localhost:8080/**. Para cadastrar uma despesa:
-
-1. Informe a **descrição** (ex.: `Farmácia - vitaminas`).
-2. Escolha a **categoria** (Mercado, Farmácia ou Automóvel).
-3. Digite o **valor em reais**, com vírgula para os centavos: `80,00`, `80,5` ou `1.234,56`. Abaixo do campo aparece quantos centavos serão enviados (ex.: "R$ 80,00 será enviado à API como 8000 centavos").
-4. Clique em **Adicionar despesa**. A tabela e os cards são atualizados.
-
-O formulário rejeita descrição vazia, categoria não selecionada, valor zero ou negativo e formatos ambíguos como `80.50`.
-
----
-
-## Como executar a demonstração (perfil `demo`)
-
-O perfil `demo` usa um banco **separado**, `transaction_demo`, para não misturar dados de demonstração com os reais.
-
-### 1. Criar o banco de demonstração (uma única vez)
+### 3. Criar o banco `budgeting_demo` (uma única vez)
 
 ```bash
 docker exec -it dio-spring-ai-budgeting-database-1 mysql -uroot -p
 ```
 
-Digite a senha de root quando solicitado (ela está no seu `compose.yml` local). Depois, no console MySQL:
+Digite a senha de root quando solicitado (o valor de `MYSQL_ROOT_PASSWORD` no seu `.env`). No console MySQL:
 
 ```sql
-CREATE DATABASE transaction_demo;
-GRANT ALL PRIVILEGES ON transaction_demo.* TO 'app'@'%';
-FLUSH PRIVILEGES;
+CREATE DATABASE budgeting_demo;
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES
+    ON budgeting_demo.* TO '<MYSQL_USER>'@'%';
 ```
 
-As tabelas são criadas pela própria aplicação (`spring.jpa.hibernate.ddl-auto=update`). Não crie tabelas nem dados manualmente.
+Troque `<MYSQL_USER>` pelo valor de `MYSQL_USER` no seu `.env`. As tabelas são criadas pelo Flyway no primeiro startup; não crie tabelas nem dados manualmente.
 
-### 2. Iniciar com o perfil `demo`
+### 4. Iniciar a aplicação em `localhost:8081`, com perfil `demo` e Flyway habilitado
+
+As credenciais do banco são passadas por variáveis de ambiente e nunca ficam no comando. Use os valores de `MYSQL_USER` e `MYSQL_PASSWORD` do seu `.env`; a senha é lida com entrada oculta.
+
+**Windows (PowerShell):**
 
 ```powershell
-.\gradlew.bat bootRun "--args=--spring.profiles.active=demo --spring.docker.compose.enabled=false --spring.datasource.url=jdbc:mysql://localhost:3307/transaction_demo --spring.datasource.username=<USUARIO_APP_DO_COMPOSE> --spring.datasource.password=<SENHA_APP_DO_COMPOSE>"
+$env:SPRING_DATASOURCE_USERNAME = '<MYSQL_USER>'
+$senha = Read-Host -AsSecureString 'Senha do usuário da aplicação'
+$env:SPRING_DATASOURCE_PASSWORD = [System.Net.NetworkCredential]::new('', $senha).Password
+.\gradlew.bat bootRun "--args=--spring.profiles.active=demo --spring.flyway.enabled=true --spring.docker.compose.enabled=false --spring.datasource.url=jdbc:mysql://localhost:3307/budgeting_demo --server.port=8081"
 ```
 
-Regras do seed (`DemoDataSeeder`):
+**Linux / macOS:**
 
-- só existe com `--spring.profiles.active=demo`. **No modo padrão, nada é populado**;
-- só popula se o banco estiver **vazio**. Se já houver qualquer transação, registra no log que nada foi criado;
-- nunca apaga, substitui nem duplica dados;
-- cria 12 despesas nas 3 categorias reais, passando pelo `PersistTransactionUseCase` (o mesmo caminho do REST).
+```bash
+export SPRING_DATASOURCE_USERNAME='<MYSQL_USER>'
+read -rs SPRING_DATASOURCE_PASSWORD && export SPRING_DATASOURCE_PASSWORD
+./gradlew bootRun --args='--spring.profiles.active=demo --spring.flyway.enabled=true --spring.docker.compose.enabled=false --spring.datasource.url=jdbc:mysql://localhost:3307/budgeting_demo --server.port=8081'
+```
+
+O que acontece no primeiro startup:
+1. O Flyway aplica V1 a V4 no `budgeting_demo` vazio.
+2. O Hibernate valida o schema.
+3. O seed v2 cria os lançamentos de demonstração.
+
+Nos startups seguintes, o seed registra no log que o banco já tem dados e não cria nada.
+
+Abra **http://localhost:8081/**.
+
+> O Flyway emite um aviso de que o MySQL 9.6 é mais novo que a última versão verificada por ele (8.1). Nos ensaios, as migrações funcionaram normalmente.
 
 ---
 
-## Interface web
+## Interface
 
-Servida pelo Spring Boot a partir de `src/main/resources/static` (sem porta nem serviço adicional).
+SPA local com navegação por hash. Rótulos em pt-BR, layout responsivo e tema claro ou escuro conforme o sistema.
 
-- **Cards:** total geral, Farmácia, Mercado e quantidade de lançamentos.
-- **Formulário:** descrição, categoria e valor em reais. Mostra mensagens de sucesso e erro.
-- **Tabela:** ordenada por valor, com filtro (Todas, Mercado, Farmácia, Automóvel), estado vazio e total da seleção.
-- **Responsiva:** em telas estreitas, as linhas da tabela viram cartões. Tema claro ou escuro conforme o sistema.
-- **Card "Assistente por voz":** apenas informativo e **desativado** (veja abaixo).
+- **Painel (`#/painel`):**
+  - filtro de período, sempre com as datas do período e da comparação;
+  - cards de receitas, despesas, saldo e quantidade de lançamentos realizados, com variação em relação ao período anterior;
+  - gastos por categoria em barras de CSS;
+  - 5 maiores despesas e 10 últimos lançamentos realizados;
+  - destaques locais;
+  - bloco **Previsto no período**, com receitas e despesas previstas, **saldo projetado** (realizado + previstos) e aviso de previstos vencidos;
+  - estado vazio com botão para o primeiro lançamento.
+- **Lançamentos (`#/lancamentos`):**
+  - filtros e totais do servidor (realizado e previsto separados);
+  - tabela no desktop e cartões no celular;
+  - botão "Carregar mais";
+  - previstos destacados;
+  - ações Editar, Excluir e **Marcar como realizado** (só para previstos cuja data já chegou).
+- **Novo e editar:**
+  - `<dialog>` nativo, em tela cheia no celular;
+  - campos de tipo, descrição, valor em R$, data, categoria (de acordo com o tipo), pagamento, recorrência, situação e observação;
+  - o valor digitado (ex.: `1.234,56`) vira centavos com `BigInt`, sem ponto flutuante;
+  - uma data futura trava a situação em **Previsto** e avisa o usuário;
+  - erros da API aparecem junto a cada campo.
+- **Excluir e confirmar:** diálogos mostram descrição, valor, data e categoria. A requisição só sai depois da confirmação explícita.
+- **Orçamentos, Metas, Assistente e Voz:** aparecem como "em breve" ou "indisponível", conforme `features` do servidor (hoje `false`), sem controles falsos.
 
-Como funciona:
+---
 
-- Usa somente os endpoints REST existentes. Como não há `GET /transactions`, a lista completa é montada com três chamadas: `GET /transactions/GROCERIES`, `/PHARMA` e `/AUTO`.
-- As categorias do `<select>` repetem no JavaScript os valores reais do enum `Category`, com rótulos em português. Se o enum mudar, `js/app.js` precisa ser atualizado.
-- **Dinheiro sem ponto flutuante** (`js/money.js`):
-  - o texto digitado ("1.234,56") é convertido para centavos com `BigInt`;
-  - o valor em reais vindo da API é lido pela sua representação decimal exata;
-  - somas e formatação em BRL são feitas em centavos inteiros.
+## Flyway e migrações
+
+| Versão | Conteúdo |
+|---|---|
+| V1 | Schema v1 idêntico ao original (inclusive o ENUM nativo de `category`), aplicado só em banco vazio |
+| V2 | Colunas `type`, `payment_method`, `recurrence`, `status`, `notes`, `occurred_at`, `created_at` e `updated_at`, com backfill dos registros v1 |
+| V3 | `category` passa a `VARCHAR(40)`; campos obrigatórios viram `NOT NULL`; remove os DEFAULTs provisórios; `CHECK (amount > 0)` |
+| V4 | Índices em `occurred_at`, `(type, occurred_at)` e `(category, occurred_at)` |
+
+- **Desabilitado por padrão** (`spring.flyway.enabled=false`). Só roda com `--spring.flyway.enabled=true`.
+- Bancos v1 existentes entram por **baseline** na versão 1. O `clean` fica desabilitado.
+- **Backfill aplicado a registros v1:**
+  - tipo despesa, meio de pagamento "outro", sem recorrência, situação realizado e sem observação;
+  - `occurred_at = 2026-10-12`. Essa é a **data de backfill da migração**, não a data real em que o gasto ocorreu.
+- O Flyway gratuito não desfaz migrações. A volta é feita restaurando um backup, e esse procedimento foi ensaiado.
 
 ---
 
 ## API REST
 
+Valores entram em **centavos** (inteiro positivo) e saem em reais (`amount`, `BigDecimal`) e em centavos (`amountInCents`). Datas usam o formato `AAAA-MM-DD`. Erros vêm em `ProblemDetail`.
+
 | Método | Rota | Descrição |
 |---|---|---|
-| `POST` | `/transactions` | Cria uma despesa (JSON, `amount` em **centavos**) |
-| `GET` | `/transactions/{category}` | Lista as despesas de uma categoria (`GROCERIES`, `PHARMA`, `AUTO`), `amount` em reais |
-| `POST` | `/transactions/ai` | Ponto de integração de voz: recebe `multipart/form-data` com o campo `file` e devolve `audio.mp3`. **Requer `OPENAI_API_KEY`** |
+| `GET` | `/transactions?start&end&type&category&status&page&size` | Histórico filtrado e paginado (`size` até 100), com `totals.confirmed` e `totals.planned` |
+| `POST` | `/transactions` | Cria um lançamento (contrato completo ou legado, veja abaixo) |
+| `GET` | `/transactions/{id}` | Consulta por id (só UUID completo) |
+| `PUT` | `/transactions/{id}` | Edição completa; `status` obrigatório. Também serve para confirmar um previsto |
+| `DELETE` | `/transactions/{id}` | Exclusão (204) |
+| `GET` | `/transactions/{category}` | Rota da v1, mantida. Aceita só categorias reais do enum |
+| `GET` | `/dashboard/summary?period=THIS_MONTH\|LAST_MONTH\|LAST_30_DAYS` ou `?start&end` | Resumo do período (até 366 dias). Sem parâmetros, usa o mês atual |
+| `GET` | `/reference-data` | Tipos, categorias (com tipo, rótulo e descrição), meios de pagamento, recorrências, situações e `features` |
+| `POST` | `/transactions/ai` | Ponto de integração de voz (multipart `file`). **Requer `OPENAI_API_KEY`; não validado** |
 
-> No PowerShell, use `curl.exe` em vez de `curl`.
+Um id que não é UUID completo, ou uma categoria inexistente na rota, responde **404 "Recurso não encontrado"**. Um UUID inexistente responde **404 "Lançamento não encontrado"**.
 
-**Criar uma despesa de R$ 80,00:**
+### Criar lançamento (contrato completo)
 
 ```bash
-curl -X POST http://localhost:8080/transactions \
+curl -X POST http://localhost:8081/transactions \
   -H "Content-Type: application/json" \
-  -d '{"description": "Farmácia", "category": "PHARMA", "amount": 8000}'
+  -d '{"type":"EXPENSE","description":"Mercado da semana","amount":15890,"category":"GROCERIES","occurredAt":"2026-10-12","paymentMethod":"DEBIT_CARD","recurrence":"NONE","notes":null}'
 ```
 
-Resposta `201 Created`, com o valor em reais:
+- `status` é opcional na criação: datas futuras viram `PLANNED` e as demais, `CONFIRMED`.
+- Data futura com `CONFIRMED` responde 400.
+- Se qualquer campo novo for enviado, `type`, `occurredAt`, `paymentMethod` e `recurrence` passam a ser obrigatórios.
+
+### Compatibilidade temporária com o POST da v1
+
+O corpo antigo `{"description": "...", "category": "PHARMA", "amount": 8000}`, **sem nenhum campo novo**, continua aceito:
+- valores padrão: `type=EXPENSE`, `occurredAt=hoje` (America/Sao_Paulo), `paymentMethod=OTHER`, `recurrence=NONE`, `status=CONFIRMED`;
+- a resposta traz o cabeçalho `X-Budgeting-Legacy-Defaults: type,occurredAt,paymentMethod,recurrence,status`;
+- o servidor registra um aviso no log, sem nenhum dado financeiro;
+- categoria de receita, valor decimal, zero ou negativo continuam respondendo 400.
+
+Esse modo será **removido** quando não houver mais clientes legados. A interface v2 sempre envia o contrato completo.
+
+### Erros
 
 ```json
-{ "id": "…", "category": "PHARMA", "description": "Farmácia", "amount": 80.00 }
-```
-
-**Listar as despesas de farmácia:**
-
-```bash
-curl http://localhost:8080/transactions/PHARMA
+{ "title": "Dados inválidos", "status": 400, "detail": "Revise os campos indicados.",
+  "errors": [ { "field": "category", "message": "A categoria Salário não é compatível com despesa." } ] }
 ```
 
 ---
 
-## Uso da IA por voz: arquitetura e estado atual
+## Dashboard
 
-### Ponto de integração
+- **Realizado** considera só `CONFIRMED`; **previstos** ficam num bloco separado.
+- **Saldo projetado** = saldo realizado + receitas previstas − despesas previstas.
+- **Comparação:**
+  - "Este mês" e "Mês anterior" comparam meses completos;
+  - "Últimos 30 dias" e o intervalo personalizado comparam com o período imediatamente anterior de mesma duração;
+  - `deltaPercent` é `null` quando o período anterior é zero.
+- Participações e variações usam `BigDecimal` com 1 casa decimal (`HALF_EVEN`); somas usam aritmética exata em centavos.
+- **Destaques:** texto montado no servidor, sem IA e só com lançamentos realizados.
+  - **"Possível cobrança recorrente"** é uma heurística: mesma categoria, descrição normalizada igual, valor dentro de ±10% e intervalo de 25 a 35 dias.
+  - Sempre é apresentada como "possível", nunca como fato.
 
-O back-end já tem o endpoint **`POST /transactions/ai`**. Ele recebe um áudio no campo multipart `file` e devolve um MP3. Fluxo esperado:
+---
 
-```
-áudio (.m4a/.mp3/.wav)
-   │
-   ▼
-POST /transactions/ai  (campo multipart "file")
-   │
-   ├─1. Transcrição ............ OpenAI whisper-1 (TranscriptionModel)
-   ├─2. Interpretação .......... gpt-4o-mini via ChatClient + system prompt
-   ├─3. Tool Calling ........... persist-transaction, list-transactions-by-category ou summarize-expenses
-   │                             └─ Spring AI executa o método Java correspondente
-   ├─4. Caso de uso ............ regra de negócio + acesso ao banco (MySQL)
-   ├─5. Resposta em texto ...... o modelo redige a resposta com os dados da tool
-   └─6. Texto para fala ........ gpt-4o-mini-tts (TextToSpeechModel)
-   │
-   ▼
-resposta.mp3
-```
+## Seed de demonstração (v2)
 
-A IA **apenas interpreta a intenção**. Regras de negócio, cálculos e acesso a dados ficam em código Java, expostos ao modelo somente pelas tools registradas:
+- Ativado só com `--spring.profiles.active=demo`. No modo padrão, nada é populado.
+- Só insere dados se o banco conectado for **exatamente** o de `app.demo.database` (`budgeting_demo`) **e** estiver vazio. Em qualquer outro banco, registra "seed bloqueado" e não insere nada.
+- Cria **42 lançamentos fictícios**:
+  - 3 meses de datas relativas ao relógio da aplicação, mais um previsto no mês seguinte;
+  - receitas (salário, freelance, reembolso, rendimentos) e despesas em várias categorias;
+  - recorrência marcada só como metadado em salário, aluguel, internet e streaming;
+  - previstos futuros e um previsto vencido.
+- Idempotente: reiniciar não duplica nada.
+- O seed v1 continua no código, no perfil `demo-v1`.
 
-| Tool | Caso de uso | Para quê |
-|---|---|---|
-| `persist-transaction` | `PersistTransactionUseCase` | Registrar uma despesa |
-| `list-transactions-by-category` | `ListTransactionsByCategoryUseCase` | Listar as despesas de uma categoria |
-| `summarize-expenses` ✨ | `SummarizeExpensesUseCase` | Total gasto, quantidade de transações e maior despesa |
+---
 
-A chave fica **somente no servidor**, na variável de ambiente `OPENAI_API_KEY`. A interface web nunca recebe nem envia a chave.
+## IA e voz: estado atual
 
-### Estado atual
-
-- **Não executados nesta validação:** transcrição, interpretação por IA, Tool Calling real, geração de MP3 e os testes `*IT`. Não havia chave da OpenAI com créditos de API, e **nenhuma chamada à OpenAI foi feita**.
-- **A interface ainda não tem controles de voz:** não há gravação, upload de áudio nem player de MP3. O card "Assistente por voz" é informativo e fica desativado.
-- **Validado sem IA:** a lógica da tool `summarize-expenses` e a conversão de centavos, por testes unitários.
-
-### Como validar a voz quando houver uma chave com créditos
-
-A validação é feita **diretamente no endpoint**, por curl ou outro cliente HTTP. Não é feita pela interface.
-
-1. Inicie a aplicação com `OPENAI_API_KEY` definida no mesmo terminal (veja [Segurança](#segurança)).
-2. Envie um áudio. O repositório inclui gravações de registro de gastos em `src/test/resources/audio/`. O `recording-1.m4a` contém um comando com "80 reais", conforme o `OpenAiTranscriptionModelIT`.
-
-```bash
-curl -X POST http://localhost:8080/transactions/ai \
-  -F "file=@src/test/resources/audio/recording-1.m4a" \
-  -o resposta.mp3
-```
-
-3. Ouça o `resposta.mp3` e confira pela interface ou por `GET /transactions/{category}` se a transação foi criada.
-4. Para testar a `summarize-expenses`, grave um áudio próprio (por exemplo, "Quanto gastei com farmácia?") e envie da mesma forma. Esse tipo de consulta não deve criar transações.
-
-### Comportamento esperado (não validado)
-
-As respostas abaixo são **ilustrativas**. O texto real é gerado pelo modelo. Os valores consideram o banco `transaction` validado: Farmácia R$ 80,00, Mercado R$ 45,00 e Combustível R$ 50,00.
-
-| Você fala | Tool esperada | Exemplo de resposta |
-|---|---|---|
-| "Gastei 80 reais na farmácia" | `persist-transaction` (`amount=8000`, `PHARMA`) | "Pronto, registrei 80 reais em farmácia." |
-| "Quanto gastei no total?" | `summarize-expenses` (sem categoria) | "Você gastou 175 reais em 3 compras." |
-| "Quanto gastei com farmácia?" | `summarize-expenses` (`PHARMA`) | "Com farmácia, você gastou 80 reais em uma compra." |
-| "Qual foi minha maior despesa?" | `summarize-expenses` (sem categoria) | "Sua maior despesa foi na farmácia, 80 reais." |
-| "Liste meus gastos de mercado" | `list-transactions-by-category` (`GROCERIES`) | "No mercado, você tem uma compra de 45 reais." |
-
-### Melhorias de IA já implementadas no código
-
-- **Tool `summarize-expenses`:** recebe `Category` opcional e calcula em Java o total, a quantidade e a maior despesa. Sem transações, devolve `total = 0.00`, `transactionCount = 0` e `largestExpense = null`, para que o modelo não precise inventar valores.
-- **Correção de centavos na saída:** `amount` continua `long` em centavos no domínio, no JPA, no banco e na entrada REST. As saídas usam `BigDecimal` com 2 casas (`BigDecimal.valueOf(amount, 2)`).
-- **System prompt revisado** (`prompts/system-message.st`): respostas curtas em pt-BR, uso obrigatório da `summarize-expenses` para totais, categorias em português e proibição de inventar dados.
+- **`POST /transactions/ai`** (multipart `file`) foi projetado para o fluxo áudio → transcrição → interpretação → tool (`persist-transaction`, `list-transactions-by-category` ou `summarize-expenses`) → texto → MP3.
+- **Nada disso foi executado.** Não havia `OPENAI_API_KEY` com créditos, e nenhuma chamada à OpenAI foi feita.
+- A tool `summarize-expenses` considera só despesas realizadas. A lógica foi validada por testes unitários.
+- **Pendências conhecidas da voz:** com a v2, as tools passaram a enxergar 16 categorias, e o prompt (`system-message.st`) ainda cita só 3. Além disso, a escrita por voz deverá exigir prévia e confirmação antes de gravar.
+- **Assistente textual:** não implementado (`features.assistant=false`). Quando existir, será somente leitura, com tools estreitas e sem SQL livre.
+- A chave fica só no ambiente do servidor; a interface nunca a recebe.
 
 ---
 
 ## Testes
 
-### Testes unitários (sem infraestrutura)
-
-Não sobem Spring e não usam MySQL, Docker nem OpenAI. Usam um repositório falso em memória (`InMemoryTransactionRepository`, só em `src/test`).
+**89 testes unitários**, sem Spring, banco, Docker nem OpenAI:
 
 ```bash
-./gradlew test --tests "dio.budgeting.application.*" --tests "dio.budgeting.infrastructure.demo.*"
+./gradlew test --tests "dio.budgeting.domain.*" --tests "dio.budgeting.application.*" --tests "dio.budgeting.infrastructure.*"
 ```
 
-| Classe | Testes | O que valida |
-|---|---|---|
-| `TransactionOutputTest` | 5 | Conversão de centavos para reais (`8000 → 80.00`, `5 → 0.05`) e mapeamento dos campos |
-| `SummarizeExpensesUseCaseTest` | 6 | Resumo vazio, total geral, filtro por categoria, categoria sem gastos, precisão de centavos e integração com `PersistTransactionUseCase` |
-| `DemoDataSeederTest` | 3 | Seed em banco vazio, preservação de dados existentes e não duplicação em execução repetida |
+| Área | Classes |
+|---|---|
+| Domínio | `TransactionTest`, `CategoryTest`, `ReportingPeriodTest` |
+| Casos de uso | `PersistTransactionUseCaseTest` (incluindo o legado), `UpdateDeleteTransactionUseCaseTest`, `SearchTransactionsUseCaseTest`, `GetDashboardSummaryUseCaseTest`, `SummarizeExpensesUseCaseTest` |
+| Dashboard | `DashboardCalculatorTest` (totais, comparação, previstos, destaques e heurística) |
+| HTTP | `TransactionRequestMapperTest`, `RoutePatternsTest`, `ApiExceptionHandlerTest` |
+| Saída e seed | `TransactionOutputTest`, `DemoDataSeederTest`, `DemoDataSeederV2Test` |
 
-### Testes que dependem de serviços externos
-
-- `*IT` (`OpenAiChatClientIT`, `ToolCallingIT`, `OpenAiTranscriptionModelIT`…): chamam a OpenAI de verdade, só rodam com `OPENAI_API_KEY` definida e **geram custo**.
-- `BudgetingApplicationTests.contextLoads`: sobe o contexto Spring completo e precisa de banco configurado.
-
-Não foram executados nesta validação. Para rodar a suíte completa (`./gradlew test`), deixe o MySQL acessível e a chave definida.
+Os testes `*IT` (que chamam a OpenAI) e o `contextLoads` (contexto completo) **não foram executados**.
 
 ---
 
-## Evidências de validação
+## Validações executadas
 
-Validação local realizada com Docker Desktop, MySQL e Spring Boot.
+Todas em **bancos de ensaio** criados para isso. Os bancos `transaction` e `transaction_demo` não foram alterados.
 
-**Testes unitários:** 14 testes, 0 falhas (`TransactionOutputTest` 5, `SummarizeExpensesUseCaseTest` 6, `DemoDataSeederTest` 3).
-
-**Infraestrutura:** container MySQL `healthy`, porta `localhost:3307`. A aplicação subiu **sem** `OPENAI_API_KEY`.
-
-**Banco `transaction` (dados reais):**
-
-| Descrição | Categoria | Enviado | Retornado | Origem |
-|---|---|---|---|---|
-| Farmácia | PHARMA | `8000` | `80.00` | `POST /transactions` (REST) |
-| Mercado | GROCERIES | `4500` | `45.00` | `POST /transactions` (REST) |
-| Combustível - teste da interface | AUTO | `5000` (digitado `50,00`) | `50.00` | Formulário da interface |
-
-- Antes do formulário: `GET /transactions/AUTO` → `[]` e a interface mostrou "Nenhuma despesa em Automóvel".
-- Envio pelo formulário: **um único** `POST /transactions` → `201`, registrado pela própria página.
-- Depois: `GET /transactions/AUTO` devolveu `50.00`. A interface mostrou R$ 50,00, total geral R$ 175,00 e 3 lançamentos. O banco ficou com 3 linhas (17.500 centavos).
-- Persistência e UTF-8 conferidos com as descrições `Farmácia` e `Combustível`.
-
-**Banco `transaction_demo` (perfil `demo`):**
-
-| Categoria | Lançamentos | Total |
-|---|---|---|
-| Mercado | 5 | R$ 742,35 |
-| Farmácia | 3 | R$ 177,79 |
-| Automóvel | 4 | R$ 494,00 |
-| **Total** | **12** | **R$ 1.414,14** |
-
-- 1º startup com `demo` em banco vazio: 12 transações criadas.
-- 2º startup com `demo`: o log informou que o banco já tinha dados e nada foi criado. O banco continuou com 12 linhas e 141.414 centavos.
-- Interface conferida com os dados do seed:
-  - cards, filtros e totais por categoria;
-  - formato BRL;
-  - validações do formulário, sem envio;
-  - layout medido pelo DOM em 1280 px e 375 px.
-
-**Não executado:** voz, transcrição, Tool Calling real, MP3, testes `*IT`, `contextLoads` e o `./gradlew bootRun` com suporte automático a Docker Compose.
+- **Migração a partir do zero:** V1 a V4 aplicadas num banco vazio, com colunas, constraints e índices conferidos e `ddl-auto=validate` aprovando o schema.
+- **Migração de cópias dos dados v1** (baseline + V2 a V4): contagem, soma por categoria e impressão digital das linhas **idênticas** antes e depois; backfill conferido em todas as linhas.
+- **Restauração:** uma cópia migrada foi restaurada a partir do backup e voltou exatamente ao estado v1.
+- **Proteção:** com o Flyway desabilitado, a v2 recusou subir contra uma cópia v1, sem alterá-la.
+- **REST (35 verificações):**
+  - compatibilidade com a v1;
+  - contrato completo;
+  - respostas 400 por campo (valor decimal, zero ou negativo; categoria incompatível; datas fora da faixa; data futura confirmada; contrato incompleto; enum e JSON inválidos);
+  - consulta por id, edição, exclusão e 404;
+  - parâmetros inválidos e dashboard.
+- **Seed v2:** 42 lançamentos no `budgeting_demo`; reinício sem duplicar; bloqueio confirmado num banco que não é o de demonstração.
+- **Interface:**
+  - presets e intervalo personalizado;
+  - cards, previstos e destaques;
+  - filtros, paginação e totais;
+  - criação, edição, confirmação e exclusão por ações reais no navegador, com erro do servidor exibido no campo;
+  - celular (375 px) sem rolagem horizontal.
 
 ---
 
 ## Limitações conhecidas
 
-- **Sem edição e exclusão:** não existem endpoints `PUT` ou `DELETE`, então a interface só cadastra e consulta.
-- **Sem listagem geral:** não há `GET /transactions`. A interface faz uma consulta por categoria e junta os resultados.
-- **Categorias repetidas no front-end:** a API não expõe o enum, então `js/app.js` repete os três valores.
-- **Voz:** o fluxo de IA exige `OPENAI_API_KEY` com créditos e ainda não tem controles na interface.
-- **Sem datas:** as transações não têm data, então não há consultas por período.
-- **MySQL na primeira inicialização:** o healthcheck do `compose.yml` não tem `start_period`, então o container pode aparecer `unhealthy` por alguns minutos antes de estabilizar.
+- **Testcontainers não foi usado.** As queries do repositório foram validadas manualmente nos bancos de ensaio, sem teste automatizado de integração.
+- **IA textual e voz não foram executadas** e exigem `OPENAI_API_KEY` com créditos. A interface não tem controles de voz.
+- **O banco `transaction` ainda não foi migrado.** Para ele, a v2 só funciona depois de um procedimento de migração autorizado.
+- O Flyway não declara suporte verificado ao MySQL 9.6 (apenas aviso).
+- A recorrência é só uma característica: nenhum lançamento é gerado automaticamente.
+- Ainda não existem orçamentos, metas, contas, cartões, tags, anexos, importação CSV/OFX nem gráficos de evolução mensal.
 
 ---
 
 ## Segurança
 
-- **Nunca versione `OPENAI_API_KEY`.** Não a coloque no código, no `application.properties`, no front-end nem em commits. O projeto lê `${OPENAI_API_KEY}` do ambiente do servidor.
-- Para definir a chave só no terminal atual, sem exibi-la na tela nem gravá-la no histórico (PowerShell):
-
-```powershell
-$secureKey = Read-Host -AsSecureString 'OPENAI_API_KEY'
-$env:OPENAI_API_KEY = [System.Net.NetworkCredential]::new('', $secureKey).Password
-.\gradlew.bat bootRun
-```
-
-- No Linux/macOS, use `read -rs OPENAI_API_KEY && export OPENAI_API_KEY` antes de `./gradlew bootRun`.
-- **Credenciais do banco:** os usuários e senhas do MySQL são de desenvolvimento local e estão no `compose.yml`. Consulte-os ali e não os copie para documentação, issues ou repositórios públicos. Nos comandos deste README eles aparecem como marcadores (`<USUARIO_APP_DO_COMPOSE>`, `<SENHA_APP_DO_COMPOSE>`).
+- **Nunca versione `OPENAI_API_KEY`** nem credenciais. O projeto lê a chave do ambiente do servidor.
+- **As senhas do MySQL ficam só no `.env` local**, que é ignorado pelo Git e **nunca deve ser versionado**. O repositório traz apenas o `.env.example`, sem senhas. O `compose.yml` não tem senhas literais, inclusive no healthcheck.
+- Credenciais de desenvolvimento **não devem ser reutilizadas** em outros ambientes. Nos comandos deste README elas aparecem só como marcadores (`<MYSQL_USER>`) ou são lidas com entrada oculta.
+- O MySQL do Docker Compose escuta apenas em `127.0.0.1:3307`, sem exposição para a rede local.
+- Backups e dumps de banco ficam fora do Git (em `build/`, que é ignorado). Nunca devem ser publicados.
+- A interface usa só a API da mesma origem e insere textos com `textContent`, nunca HTML vindo da API.
 
 ---
 
 ## Decisões técnicas
 
-- **A IA interpreta, o Java executa.** O modelo só acessa as três tools registradas no `ChatClient`. Ele não executa SQL nem operações arbitrárias.
-- **Categorias como enum.** O Spring AI gera o JSON Schema da tool com a lista fechada de `Category`, então o modelo não consegue inventar categorias.
-- **Dinheiro sem `double` no back-end.** Armazenamento em centavos (`long`), soma com `Math.addExact` (falha em vez de estourar em silêncio) e saída em `BigDecimal` com escala 2.
-- **Dinheiro sem ponto flutuante no front-end.** Conversão de texto para centavos com `BigInt`, somas em centavos inteiros e formatação BRL manual.
-- **Porta e adaptador.** O `findAll()` foi adicionado à porta `TransactionRepository` e implementado no adaptador JPA. Os casos de uso não conhecem o JPA.
-- **Seed seguro.** O `DemoDataSeeder` só existe no perfil `demo`, só popula banco vazio e cria os dados pelo `PersistTransactionUseCase`.
-- **Testabilidade.** Casos de uso e seed dependem só da porta, então são testados com um repositório em memória.
+- **Entidade única com tipo.** `Transaction` evoluiu com `type` (receita ou despesa), e o saldo vem do tipo, nunca do sinal do valor.
+- **Dinheiro sem ponto flutuante.** Centavos em `long`, somas com `Math.addExact`, saídas em `BigDecimal`; no front-end, `BigInt`.
+- **Previsto separado do realizado.** O campo `status` é explícito, então um previsto nunca vira realizado sem uma edição do usuário.
+- **Schema versionado** com Flyway, desabilitado por padrão e com a validação do Hibernate como proteção.
+- **Rotas sem ambiguidade.** `{id}` só casa com UUID; `{category}` só casa com valores do enum, e um teste garante que a lista acompanha o enum.
+- **Erros em `ProblemDetail`** com a lista `errors` por campo.
+- **Seed seguro.** Depende do perfil, de um banco explícito e de o banco estar vazio, e passa pelo mesmo caso de uso da API.
 
 ---
 
@@ -404,15 +432,15 @@ $env:OPENAI_API_KEY = [System.Net.NetworkCredential]::new('', $secureKey).Passwo
 
 ## Melhorias futuras
 
-- Interface de voz funcional (gravação ou upload de áudio e player do MP3), usando `POST /transactions/ai`, quando houver uma chave configurada
-- `GET /transactions` para listar todas as despesas e um endpoint que exponha as categorias
-- Edição e exclusão de despesas (`PUT`/`DELETE`)
-- Data nas transações e consultas por período ("quanto gastei **este mês**?")
-- Receitas e saldo estimado
-- Validação no domínio (valor positivo, descrição obrigatória) e respostas de erro padronizadas (`ProblemDetail`)
-- `start_period` no healthcheck do MySQL
-- Endpoint de texto para testar a IA sem áudio e documentação OpenAPI/Swagger
-- Extrair a orquestração de IA do controller para um serviço dedicado
+- Procedimento autorizado de migração do banco `transaction`, seguido do Flyway habilitado por padrão
+- Remoção do contrato legado do `POST /transactions`
+- Orçamentos por categoria e alertas de gastos acima do planejado
+- Metas financeiras com acompanhamento de progresso
+- Recorrências e previsões, com geração de lançamentos sempre com prévia e confirmação
+- Assistente textual somente leitura, com evidências dos dados usados
+- Voz na interface (upload, gravação e player), com prévia e confirmação antes de qualquer escrita
+- Testes de integração com Testcontainers
+- Contas e cartões, tags, anexos, importação CSV/OFX e gráficos de evolução mensal
 
 ---
 
@@ -420,7 +448,6 @@ $env:OPENAI_API_KEY = [System.Net.NetworkCredential]::new('', $secureKey).Passwo
 
 - [Trilha oficial DIO: Spring Boot](https://github.com/digitalinnovationone/dio-spring-boot-learning-track)
 - [Spring AI Reference](https://docs.spring.io/spring-ai/reference/index.html)
-- [ChatClient API](https://docs.spring.io/spring-ai/reference/api/chatclient.html)
 - [Tool Calling](https://docs.spring.io/spring-ai/reference/api/tools.html)
-- [Audio Transcriptions API](https://docs.spring.io/spring-ai/reference/api/audio/transcriptions.html)
-- [Audio Speech API](https://docs.spring.io/spring-ai/reference/api/audio/speech.html)
+- [Flyway](https://documentation.red-gate.com/flyway)
+- [Problem Details (RFC 9457)](https://www.rfc-editor.org/rfc/rfc9457)

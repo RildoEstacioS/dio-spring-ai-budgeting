@@ -27,11 +27,15 @@ public class SummarizeExpensesUseCase {
     @Tool(name = "summarize-expenses",
             description = "Resume os gastos registrados: total gasto, quantidade de transações e maior despesa. "
                     + "Use para perguntas como 'quanto gastei', 'qual foi minha maior despesa' ou pedidos de resumo. "
+                    + "Considera somente despesas realizadas; receitas e lançamentos previstos ficam de fora. "
                     + "Os valores retornados já estão em reais.")
     public ExpenseSummaryOutput execute(
             @ToolParam(description = "Categoria para filtrar os gastos. Omita para considerar todas as categorias",
                     required = false) Category category) {
-        var transactions = findTransactions(category);
+        var transactions = findTransactions(category).stream()
+                .filter(Transaction::isExpense)
+                .filter(Transaction::isConfirmed)
+                .toList();
 
         var totalInCents = transactions.stream()
                 .mapToLong(Transaction::getAmount)

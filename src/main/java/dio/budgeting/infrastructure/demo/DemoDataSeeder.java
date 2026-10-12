@@ -15,11 +15,11 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 
 /**
- * Popula o banco com despesas de demonstração, apenas no perfil "demo" e apenas se não houver nenhuma transação.
- * Nunca apaga, substitui ou duplica dados existentes.
+ * Seed v1 (12 despesas), preservado como referência. Só roda no perfil "demo-v1"; o perfil "demo" usa o
+ * {@link DemoDataSeederV2}. Popula apenas banco vazio e nunca apaga, substitui ou duplica dados existentes.
  */
 @Component
-@Profile("demo")
+@Profile("demo-v1")
 public class DemoDataSeeder implements ApplicationRunner {
     private static final Logger log = LoggerFactory.getLogger(DemoDataSeeder.class);
 
